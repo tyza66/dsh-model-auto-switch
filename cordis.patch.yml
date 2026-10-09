@@ -1,0 +1,66 @@
+# dsh-loop-agent — endless same-session loop bundle for the DSH web profile.
+#
+# Mounts over dsh-web-app. Two responsibilities:
+#   1. Re-enable the upstream dsh-compaction-basic / dsh-command-compact /
+#      dsh-tool-result-pruner rows (web-app disables them by default because
+#      it normally moves compaction behind agent presets; for this bundle
+#      the loop runs against the host plane and the compactor is the
+#      orthogonal context-window safety net).
+#   2. Insert the loop-runner row, which attaches a fire-and-forget driver
+#      task to every new agent on the host scope. The driver queues a
+#      user-configurable continuation prompt at every turn boundary,
+#      forever, retrying with exponential backoff on any failure and
+#      exiting only when the agent or session is torn down.
+
+# ── re-enable compaction (web-app disables these; we want them on) ────────
+# 80% threshold + 16% retain + auto = compact proactively when the
+# assembled context hits 80% of the model window, retaining the most
+# recent 16% verbatim and summarising the rest. The loop does not know
+# about context pressure at all; the compactor is the safety net.
+- id: compaction-basic
+  disabled: false
+  config:
+    auto: true
+    thresholdRatio: 0.8
+    retainRatio: 0.16
+
+# /compact command becomes available so the user can trigger an immediate
+# compaction in addition to the auto one.
+- id: command-compact
+  disabled: false
+
+# The pruner trims overgrown tool-result blocks between auto-compaction
+# passes; harmless when no oversized results are present, prevents the
+# single-tool-bloat case from blocking the compactor's threshold.
+- id: tool-result-pruner
+  disabled: false
+
+# ── insert the loop runner row ───────────────────────────────────────────
+- insert:
+    - id: loop-runner
+      name: '@tyza66/dsh-loop-agent'
+      # `disabled` is a coarse, full-unmount switch: when true the plugin
+      # fiber never starts, the driver never attaches to any agent, and
+      # the webserver routes the settings panel talks to are absent. Use
+      # it for a hard kill (e.g. to drop the bundle from a profile
+      # without uninstalling it). Default false.
+      #
+      # For the everyday on/off, prefer the in-app Endless-loop switch
+      # under Settings — it flips a sidecar JSON the driver polls every
+      # phase, so the loop becomes inert without unmounting the plugin.
+      # That sidecar lives at
+      #   $DSH_HOME/profiles/<profile>/.dsh-loop-agent.json
+      # and can also be edited by hand; the driver re-reads it on every
+      # phase boundary.
+      disabled: false
+      config:
+        continuation: '继续，并深度检查暗病，遇到暗病和缺陷就修复'
+        initialBackoffMs: 1000
+        maxBackoffMs: 32000
+        backoffFactor: 2
+        quiet: false
+        idleGraceMs: 300000
+        autoAnswerQuestions: true
+        autoAnswerFreeText: true
+        autoApproveActions: true
+        escalateAfterFailures: 3
